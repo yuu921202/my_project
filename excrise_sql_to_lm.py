@@ -5,7 +5,7 @@ import requests
 db = mysql.connector.connect(
     host="localhost",
     user="root",         # 你的資料庫帳號
-    password="aa12255679",  # 你的資料庫密碼
+    password="***",  # 你的資料庫密碼
     database="test"      # 剛才建立的資料庫名稱
 )
 
