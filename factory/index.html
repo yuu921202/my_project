@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>MES 智慧工廠監控系統</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --primary: #0078d4;
+            --success: #28a745;
+            --danger: #dc3545;
+            --warning: #ffc107;
+            --idle: #6c757d;
+        }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: var(--bg-color);
+            margin: 0; padding: 20px; color: #333;
+        }
+
+        .container { max-width: 1000px; margin: 0 auto; }
+
+        /* 頂部看板樣式 */
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { color: #1a1a1a; margin-bottom: 5px; }
+
+        /* 手動下單面板 */
+        .order-panel {
+            background: var(--card-bg);
+            padding: 20px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex; gap: 15px; align-items: center;
+            margin-bottom: 30px;
+        }
+        input { 
+            padding: 10px; border: 1px solid #ddd; border-radius: 6px; 
+            outline: none; transition: 0.2s;
+        }
+        input:focus { border-color: var(--primary); }
+        button {
+            padding: 10px 20px; background: var(--primary); color: white;
+            border: none; border-radius: 6px; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background: #005a9e; }
+
+        /* 隊列顯示 */
+        .queue-section { margin-bottom: 30px; }
+        .queue-container {
+            display: flex; gap: 10px; overflow-x: auto; padding: 10px 0;
+            min-height: 60px;
+        }
+        .job-tag {
+            background: var(--card-bg); padding: 8px 15px; border-radius: 20px;
+            border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            white-space: nowrap; font-size: 14px; display: flex; align-items: center; gap: 5px;
+        }
+        .priority-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+        /* 機台區 */
+        .factory-floor {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .machine-card {
+            background: var(--card-bg); border-radius: 12px; padding: 20px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08); border-top: 5px solid var(--idle);
+            transition: transform 0.2s;
+        }
+        .machine-card.working { border-top-color: var(--success); }
+        .machine-card.broken { border-top-color: var(--danger); animation: pulse 2s infinite; }
+
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); } 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); } }
+
+        .machine-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .machine-id { font-weight: bold; font-size: 18px; }
+        .status-badge { font-size: 12px; padding: 3px 8px; border-radius: 4px; color: white; }
+
+        /* 進度條 */
+        .progress-container { width: 100%; background: #eee; height: 8px; border-radius: 4px; margin: 15px 0; overflow: hidden; }
+        .progress-bar { height: 100%; background: var(--success); transition: width 0.5s; }
+
+        /* 日誌系統 */
+        #log {
+            margin-top: 30px; background: #2c3e50; color: #ecf0f1;
+            padding: 15px; border-radius: 8px; height: 150px;
+            overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🏭 Smart Factory MES</h1>
+        <p>即時生產線監控系統</p>
+    </div>
+
+    <!-- 下單區 -->
+
+<div class="order-panel" style="flex-direction: column; align-items: flex-start;">
+    <div style="display: flex; gap: 15px; align-items: center; width: 100%;">
+        <strong style="margin-right:10px;">📦 手動下單:</strong>
+        <input type="text" id="jobId" placeholder="產品名稱" style="flex:2">
+        <input type="number" id="jobPriority" placeholder="優先級(1最急)" style="flex:1">
+        <input type="number" id="jobTime" placeholder="工時(s)" style="flex:1">
+        <button onclick="addUserJob()">送出訂單</button>
+    </div>
+    
+    <hr style="width: 100%; border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+    
+    <div style="display: flex; gap: 15px; align-items: center;">
+        <strong style="margin-right:10px;">📂 批次匯入:</strong>
+        <input type="file" id="csvFile" accept=".csv" style="border: none; background: transparent;">
+        <button onclick="importCSV()" style="background: var(--idle);">執行匯入</button>
+    </div>
+</div>
+    <!-- 等待區 -->
+    <div class="queue-section">
+        <h4>🕒 等待生產隊列</h4>
+        <div id="queue-display" class="queue-container"></div>
+    </div>
+
+    <!-- 生產區 -->
+    <div id="factory-floor" class="factory-floor"></div>
+
+    <!-- 日誌 -->
+    <div id="log">系統啟動中...<br>等待新訂單進入生產線...<br></div>
+
+<script>
+    class Job {
+        constructor(id, priority, time) {
+            this.id = id;
+            this.priority = priority;
+            this.totalTime = time;
+            this.remainingTime = time;
+        }
+    }
+
+    class Machine {
+        constructor(id) {
+            this.id = id;
+            this.currentJob = null;
+            this.isBroken = false;
+            this.repairTimer = 0;
+        }
+        tick() {
+            if (this.isBroken) {
+                this.repairTimer--;
+                if (this.repairTimer <= 0) this.isBroken = false;
+                return false;
+            }
+            if (this.currentJob) {
+                this.currentJob.remainingTime--;
+                if (this.currentJob.remainingTime <= 0) return true;
+            }
+            return false;
+        }
+    }
+
+    const machines = [new Machine("M-01"), new Machine("M-02"), new Machine("M-03")];
+    const queue = [];
+
+    function addUserJob() {
+        const id = document.getElementById('jobId').value;
+        const prio = parseInt(document.getElementById('jobPriority').value);
+        const time = parseInt(document.getElementById('jobTime').value);
+        if (id && !isNaN(prio) && !isNaN(time)) {
+            queue.push(new Job(id, prio, time));
+            document.getElementById('jobId').value = '';
+            document.getElementById('jobPriority').value = '';
+            document.getElementById('jobTime').value = '';
+            addLog(`[訂單入庫] ${id} (優先級: ${prio})`);
+        }
+    }
+
+    function addLog(msg) {
+        const log = document.getElementById('log');
+        log.innerHTML += `> ${new Date().toLocaleTimeString()} ${msg}<br>`;
+        log.scrollTop = log.scrollHeight;
+    }
+
+    setInterval(() => {
+        // 1. 更新等待區視覺
+        const qDisplay = document.getElementById('queue-display');
+        qDisplay.innerHTML = queue.length === 0 ? '<span style="color:#999">目前無待加工品</span>' : 
+            queue.map(j => `
+                <div class="job-tag">
+                    <div class="priority-dot" style="background:${j.priority <= 3 ? 'var(--danger)' : 'var(--primary)'}"></div>
+                    <b>${j.id}</b> <small>(P${j.priority})</small>
+                </div>
+            `).join('');
+
+        // 2. 更新機台區視覺
+        const floor = document.getElementById('factory-floor');
+        floor.innerHTML = '';
+
+        machines.forEach(m => {
+            // 隨機故障邏輯 (2% 機率)
+            if (!m.isBroken && Math.random() < 0.02) {
+                m.isBroken = true;
+                m.repairTimer = 10;
+                addLog(`⚠️ 機台 ${m.id} 發生故障！維修倒數中`);
+            }
+
+            // 核心運算
+            if (m.tick()) {
+                addLog(`✅ 商品 ${m.currentJob.id} 生產完成！`);
+                m.currentJob = null;
+            }
+
+            // 派工邏輯
+            if (!m.currentJob && !m.isBroken && queue.length > 0) {
+                queue.sort((a, b) => a.priority - b.priority);
+                m.currentJob = queue.shift();
+            }
+
+            // 繪製卡片
+            const progress = m.currentJob ? ((m.currentJob.totalTime - m.currentJob.remainingTime) / m.currentJob.totalTime * 100) : 0;
+            const statusClass = m.isBroken ? 'broken' : (m.currentJob ? 'working' : 'idle');
+            const statusLabel = m.isBroken ? '🛠️ 維修中' : (m.currentJob ? '⚙️ 加工中' : '💤 閒置');
+            
+            const card = document.createElement('div');
+            card.className = `machine-card ${statusClass}`;
+            card.innerHTML = `
+                <div class="machine-header">
+                    <span class="machine-id">${m.id}</span>
+                    <span class="status-badge" style="background:${m.isBroken ? 'var(--danger)' : (m.currentJob ? 'var(--success)' : 'var(--idle)')}">${statusLabel}</span>
+                </div>
+                <div>
+                    ${m.isBroken ? `<p>維修進度: ${m.repairTimer}s</p>` : 
+                      (m.currentJob ? `
+                        <p>正在處理: <b>${m.currentJob.id}</b></p>
+                        <div class="progress-container"><div class="progress-bar" style="width:${progress}%"></div></div>
+                        <small>剩餘時間: ${m.currentJob.remainingTime}s</small>
+                      ` : '<p style="color:#999">等待派工中...</p>')}
+                </div>
+            `;
+            floor.appendChild(card);
+        });
+    }, 1000);
+    function importCSV() {
+    const fileInput = document.getElementById('csvFile');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert("請先選擇一個 CSV 檔案！");
+        return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const content = e.target.result;
+        const lines = content.split('\n');
+        let successCount = 0;
+        let skipCount = 0;
+
+        // 1. 蒐集目前「系統內」已存在的所有編號 (排隊中 + 機台上)
+        const existingIds = new Set([
+            ...queue.map(j => j.id),
+            ...machines.filter(m => m.currentJob).map(m => m.currentJob.id)
+        ]);
+
+        // 2. 用來追蹤「本次 CSV 內」已經讀取過的編號 (防止檔案內重複)
+        const currentFileIds = new Set();
+
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',');
+            
+            if (row.length >= 3) {
+                const id = row[0].trim();
+                const prio = parseInt(row[1].trim());
+                const time = parseInt(row[2].trim());
+
+                if (id && !isNaN(prio) && !isNaN(time)) {
+                    // --- 重複檢查邏輯 ---
+                    if (existingIds.has(id) || currentFileIds.has(id)) {
+                        console.warn(`跳過重複編號: ${id}`);
+                        skipCount++;
+                        continue; // 跳過這筆，繼續看下一行
+                    }
+
+                    // 通過檢查，加入清單
+                    queue.push(new Job(id, prio, time));
+                    currentFileIds.add(id); // 記錄這筆編號已處理
+                    successCount++;
+                }
+            }
+        }
+
+        // 3. 更新日誌回饋
+        let logMsg = `[系統] 匯入完成！成功: ${successCount} 筆`;
+        if (skipCount > 0) {
+            logMsg += `，<span style="color:var(--warning)">跳過重複: ${skipCount} 筆</span>`;
+        }
+        addLog(logMsg);
+        
+        fileInput.value = ''; 
+    };
+
+    reader.readAsText(file);
+}
+</script>
+
+</body>
+</html>
