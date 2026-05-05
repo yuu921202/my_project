@@ -22,28 +22,34 @@
 
         .container { max-width: 1000px; margin: 0 auto; }
 
-        /* 頂部看板樣式 */
         .header { text-align: center; margin-bottom: 30px; }
         .header h1 { color: #1a1a1a; margin-bottom: 5px; }
 
-        /* 手動下單面板 */
-        .order-panel {
+        /* 面板樣式 */
+        .panel {
             background: var(--card-bg);
             padding: 20px; border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            display: flex; gap: 15px; align-items: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
         }
+        
+        .order-row { display: flex; gap: 15px; align-items: center; margin-bottom: 15px; }
+        
         input { 
             padding: 10px; border: 1px solid #ddd; border-radius: 6px; 
             outline: none; transition: 0.2s;
         }
         input:focus { border-color: var(--primary); }
+        
         button {
             padding: 10px 20px; background: var(--primary); color: white;
             border: none; border-radius: 6px; cursor: pointer; font-weight: bold;
         }
         button:hover { background: #005a9e; }
+
+        /* AI 介面 */
+        .ai-panel { background: #202124; color: white; }
+        .ai-panel input { background: #3c4043; color: white; border: none; flex: 1; }
 
         /* 隊列顯示 */
         .queue-section { margin-bottom: 30px; }
@@ -74,14 +80,11 @@
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); } 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); } }
 
         .machine-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
-        .machine-id { font-weight: bold; font-size: 18px; }
         .status-badge { font-size: 12px; padding: 3px 8px; border-radius: 4px; color: white; }
 
-        /* 進度條 */
         .progress-container { width: 100%; background: #eee; height: 8px; border-radius: 4px; margin: 15px 0; overflow: hidden; }
         .progress-bar { height: 100%; background: var(--success); transition: width 0.5s; }
 
-        /* 日誌系統 */
         #log {
             margin-top: 30px; background: #2c3e50; color: #ecf0f1;
             padding: 15px; border-radius: 8px; height: 150px;
@@ -97,25 +100,32 @@
         <p>即時生產線監控系統</p>
     </div>
 
-    <!-- 下單區 -->
+    <!-- 管理面板 -->
+    <div class="panel">
+        <div class="order-row">
+            <strong>📦 手動下單:</strong>
+            <input type="text" id="jobId" placeholder="產品名稱">
+            <input type="number" id="jobPriority" placeholder="優先級(1最急)" style="width: 120px;">
+            <input type="number" id="jobTime" placeholder="工時(s)" style="width: 100px;">
+            <button onclick="addUserJob()">送出訂單</button>
+        </div>
+        
+        <div class="order-row">
+            <strong>📂 批次匯入:</strong>
+            <input type="file" id="csvFile" accept=".csv">
+            <button onclick="importCSV()" style="background: var(--idle);">執行匯入</button>
+        </div>
+    </div>
 
-<div class="order-panel" style="flex-direction: column; align-items: flex-start;">
-    <div style="display: flex; gap: 15px; align-items: center; width: 100%;">
-        <strong style="margin-right:10px;">📦 手動下單:</strong>
-        <input type="text" id="jobId" placeholder="產品名稱" style="flex:2">
-        <input type="number" id="jobPriority" placeholder="優先級(1最急)" style="flex:1">
-        <input type="number" id="jobTime" placeholder="工時(s)" style="flex:1">
-        <button onclick="addUserJob()">送出訂單</button>
+    <!-- AI 指令區 -->
+    <div class="panel ai-panel">
+        <h3 style="margin-top:0; color: #4285f4;">🤖 AI 廠長指令介面</h3>
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="aiInput" placeholder="輸入人話，例如：『幫我插一個超級急單...』">
+            <button onclick="callFactoryAI()" style="background: #4285f4;">執行指令</button>
+        </div>
     </div>
-    
-    <hr style="width: 100%; border: 0; border-top: 1px solid #eee; margin: 15px 0;">
-    
-    <div style="display: flex; gap: 15px; align-items: center;">
-        <strong style="margin-right:10px;">📂 批次匯入:</strong>
-        <input type="file" id="csvFile" accept=".csv" style="border: none; background: transparent;">
-        <button onclick="importCSV()" style="background: var(--idle);">執行匯入</button>
-    </div>
-</div>
+
     <!-- 等待區 -->
     <div class="queue-section">
         <h4>🕒 等待生產隊列</h4>
@@ -126,9 +136,11 @@
     <div id="factory-floor" class="factory-floor"></div>
 
     <!-- 日誌 -->
-    <div id="log">系統啟動中...<br>等待新訂單進入生產線...<br></div>
+    <div id="log">系統啟動中...<br>等待新指令...<br></div>
+</div>
 
 <script>
+    // --- 基礎物件定義 ---
     class Job {
         constructor(id, priority, time) {
             this.id = id;
@@ -159,150 +171,211 @@
         }
     }
 
+    // --- 全域變數 ---
     const machines = [new Machine("M-01"), new Machine("M-02"), new Machine("M-03")];
     const queue = [];
+    const GEMINI_API_KEY = "AIzaSyBeCIEX8jDY7d_wIoOUC3QEUjjBUmJZFUQ"; // 
+    // 注意這裡改成了 v1beta
+// 核心：使用 v1beta 路徑 + 1.5-flash 模型
+// 1. 更新為 2026 年最新的模型代號
+    const MODEL_NAME = "gemini-3-flash-preview"; 
 
-    function addUserJob() {
-        const id = document.getElementById('jobId').value;
-        const prio = parseInt(document.getElementById('jobPriority').value);
-        const time = parseInt(document.getElementById('jobTime').value);
-        if (id && !isNaN(prio) && !isNaN(time)) {
-            queue.push(new Job(id, prio, time));
-            document.getElementById('jobId').value = '';
-            document.getElementById('jobPriority').value = '';
-            document.getElementById('jobTime').value = '';
-            addLog(`[訂單入庫] ${id} (優先級: ${prio})`);
-        }
-    }
-
-    function addLog(msg) {
+// 2. 修正後的 API 網址 (使用 v1beta 以支援 preview 模型)
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_API_KEY}`;    function addLog(msg) {
         const log = document.getElementById('log');
         log.innerHTML += `> ${new Date().toLocaleTimeString()} ${msg}<br>`;
         log.scrollTop = log.scrollHeight;
     }
 
-    setInterval(() => {
-        // 1. 更新等待區視覺
-        const qDisplay = document.getElementById('queue-display');
-        qDisplay.innerHTML = queue.length === 0 ? '<span style="color:#999">目前無待加工品</span>' : 
-            queue.map(j => `
-                <div class="job-tag">
-                    <div class="priority-dot" style="background:${j.priority <= 3 ? 'var(--danger)' : 'var(--primary)'}"></div>
-                    <b>${j.id}</b> <small>(P${j.priority})</small>
-                </div>
-            `).join('');
+    function addUserJob() {
+        const id = document.getElementById('jobId').value.trim();
+        const prio = parseInt(document.getElementById('jobPriority').value);
+        const time = parseInt(document.getElementById('jobTime').value);
+        if (id && !isNaN(prio) && !isNaN(time)) {
+            queue.push(new Job(id, prio, time));
+            document.getElementById('jobId').value = '';
+            addLog(`[訂單入庫] ${id} (P${prio})`);
+        }
+    }
 
-        // 2. 更新機台區視覺
+    // --- AI 核心功能 ---
+    async function callFactoryAI() {
+    const userInput = document.getElementById('aiInput').value.trim();
+    if (!userInput) return;
+
+    addLog(`💬 你: ${userInput}`);
+    document.getElementById('aiInput').value = '';
+
+    // 定義工具 (讓 AI 知道它能做什麼)
+    const tools = [{
+        function_declarations: [{
+            name: "create_job",
+            description: "在工廠生產線中新增一個新的生產任務",
+            parameters: {
+                type: "OBJECT",
+                properties: {
+                    id: { type: "STRING", description: "產品的名稱或編號" },
+                    priority: { type: "NUMBER", description: "優先級，1 為最緊急，10 為普通" },
+                    time: { type: "NUMBER", description: "加工所需秒數" }
+                },
+                required: ["id", "priority", "time"]
+            }
+        }]
+    }];
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: userInput }] }],
+                tools: tools // 👈 關鍵：把工具箱交給 AI
+            })
+        });
+
+        const data = await response.json();
+        
+        // 取得 AI 的回覆（可能是說話，也可能是要按按鈕）
+        const part = data.candidates[0].content.parts[0];
+
+        // 判斷 AI 是否想調用工具
+        if (part.functionCall) {
+            handleFunctionCall(part.functionCall);
+        } else {
+            addLog(`🤖 廠長: ${part.text}`);
+        }
+
+    } catch (error) {
+        addLog(`❌ AI 指令執行失敗: ${error.message}`);
+    }
+}
+function handleFunctionCall(call) {
+    const { name, args } = call;
+    
+    if (name === "create_job") {
+        const { id, priority, time } = args;
+        
+        // 執行你原本的邏輯
+        queue.push(new Job(id, priority, time));
+        
+        addLog(`✨ [AI 工具調用] 廠長已自動下達指令：新增任務 ${id} (P${priority}, ${time}s)`);
+        addLog(`🤖 廠長: 沒問題，我已經把 ${id} 排入生產線了。`);
+    }
+}
+    function processAIResponse(fullText) {
+        const parts = fullText.split("ACTION:");
+        addLog(`🤖 廠長: ${parts[0].trim()}`);
+
+        if (parts.length > 1) {
+            try {
+                const action = JSON.parse(parts[1].trim());
+                if (action.type === "ADD_JOB") {
+                    queue.push(new Job(action.data.id, action.data.priority, action.data.time));
+                    addLog(`✨ [AI 執行] 已排入新單: ${action.data.id}`);
+                }
+            } catch (e) { console.error("指令解析錯誤", e); }
+        }
+    }
+// 在 callFactoryAI 裡面更新 tools 陣列
+const tools = [{
+    function_declarations: [
+        {
+            name: "create_job",
+            // ... (原本的內容)
+        },
+        {
+            name: "repair_machine",
+            description: "立即維修指定的故障機台",
+            parameters: {
+                type: "OBJECT",
+                properties: {
+                    machineId: { type: "STRING", description: "機台編號，例如 M-01, M-02" }
+                },
+                required: ["machineId"]
+            }
+        }
+    ]
+}];
+
+// 更新 handleFunctionCall
+function handleFunctionCall(call) {
+    const { name, args } = call;
+    
+    if (name === "create_job") {
+        // ... (原本的內容)
+    } else if (name === "repair_machine") {
+        const target = machines.find(m => m.id === args.machineId);
+        if (target && target.isBroken) {
+            target.repairTimer = 2; // AI 介入，維修變超快！
+            addLog(`🛠️ [AI 維修] 廠長派遣菁英工兵維修 ${args.machineId}...`);
+        } else {
+            addLog(`🤖 廠長回報：${args.machineId} 目前運作正常，不需要維修。`);
+        }
+    }
+}
+    // --- 模擬循環 (1秒一跳) ---
+    setInterval(() => {
+        // 更新隊列視覺
+        const qDisplay = document.getElementById('queue-display');
+        qDisplay.innerHTML = queue.length === 0 ? '<span>目前無待加工品</span>' : 
+            queue.map(j => `<div class="job-tag"><div class="priority-dot" style="background:${j.priority <= 3 ? 'var(--danger)' : 'var(--primary)'}"></div><b>${j.id}</b></div>`).join('');
+
         const floor = document.getElementById('factory-floor');
         floor.innerHTML = '';
 
         machines.forEach(m => {
-            // 隨機故障邏輯 (2% 機率)
-            if (!m.isBroken && Math.random() < 0.02) {
+            if (!m.isBroken && Math.random() < 0.01) { // 降低故障率到 1%
                 m.isBroken = true;
                 m.repairTimer = 10;
-                addLog(`⚠️ 機台 ${m.id} 發生故障！維修倒數中`);
+                addLog(`⚠️ 機台 ${m.id} 故障！`);
             }
 
-            // 核心運算
             if (m.tick()) {
-                addLog(`✅ 商品 ${m.currentJob.id} 生產完成！`);
+                addLog(`✅ 商品 ${m.currentJob.id} 完成！`);
                 m.currentJob = null;
             }
 
-            // 派工邏輯
             if (!m.currentJob && !m.isBroken && queue.length > 0) {
                 queue.sort((a, b) => a.priority - b.priority);
                 m.currentJob = queue.shift();
             }
 
-            // 繪製卡片
             const progress = m.currentJob ? ((m.currentJob.totalTime - m.currentJob.remainingTime) / m.currentJob.totalTime * 100) : 0;
-            const statusClass = m.isBroken ? 'broken' : (m.currentJob ? 'working' : 'idle');
-            const statusLabel = m.isBroken ? '🛠️ 維修中' : (m.currentJob ? '⚙️ 加工中' : '💤 閒置');
-            
             const card = document.createElement('div');
-            card.className = `machine-card ${statusClass}`;
+            card.className = `machine-card ${m.isBroken ? 'broken' : (m.currentJob ? 'working' : 'idle')}`;
             card.innerHTML = `
                 <div class="machine-header">
-                    <span class="machine-id">${m.id}</span>
-                    <span class="status-badge" style="background:${m.isBroken ? 'var(--danger)' : (m.currentJob ? 'var(--success)' : 'var(--idle)')}">${statusLabel}</span>
+                    <strong>${m.id}</strong>
+                    <span class="status-badge" style="background:${m.isBroken ? 'var(--danger)' : (m.currentJob ? 'var(--success)' : 'var(--idle)')}">
+                        ${m.isBroken ? '維修' : (m.currentJob ? '加工' : '閒置')}
+                    </span>
                 </div>
-                <div>
-                    ${m.isBroken ? `<p>維修進度: ${m.repairTimer}s</p>` : 
-                      (m.currentJob ? `
-                        <p>正在處理: <b>${m.currentJob.id}</b></p>
-                        <div class="progress-container"><div class="progress-bar" style="width:${progress}%"></div></div>
-                        <small>剩餘時間: ${m.currentJob.remainingTime}s</small>
-                      ` : '<p style="color:#999">等待派工中...</p>')}
-                </div>
+                ${m.currentJob ? `<div class="progress-container"><div class="progress-bar" style="width:${progress}%"></div></div>` : ''}
+                <small>${m.isBroken ? '維修中...' : (m.currentJob ? m.currentJob.id : '等待中')}</small>
             `;
             floor.appendChild(card);
         });
     }, 1000);
+
+    // --- CSV 功能 ---
     function importCSV() {
-    const fileInput = document.getElementById('csvFile');
-    const file = fileInput.files[0];
-
-    if (!file) {
-        alert("請先選擇一個 CSV 檔案！");
-        return;
-    }
-
-    const reader = new FileReader();
-
-    reader.onload = function(e) {
-        const content = e.target.result;
-        const lines = content.split('\n');
-        let successCount = 0;
-        let skipCount = 0;
-
-        // 1. 蒐集目前「系統內」已存在的所有編號 (排隊中 + 機台上)
-        const existingIds = new Set([
-            ...queue.map(j => j.id),
-            ...machines.filter(m => m.currentJob).map(m => m.currentJob.id)
-        ]);
-
-        // 2. 用來追蹤「本次 CSV 內」已經讀取過的編號 (防止檔案內重複)
-        const currentFileIds = new Set();
-
-        for (let i = 1; i < lines.length; i++) {
-            const row = lines[i].split(',');
-            
-            if (row.length >= 3) {
-                const id = row[0].trim();
-                const prio = parseInt(row[1].trim());
-                const time = parseInt(row[2].trim());
-
-                if (id && !isNaN(prio) && !isNaN(time)) {
-                    // --- 重複檢查邏輯 ---
-                    if (existingIds.has(id) || currentFileIds.has(id)) {
-                        console.warn(`跳過重複編號: ${id}`);
-                        skipCount++;
-                        continue; // 跳過這筆，繼續看下一行
-                    }
-
-                    // 通過檢查，加入清單
-                    queue.push(new Job(id, prio, time));
-                    currentFileIds.add(id); // 記錄這筆編號已處理
-                    successCount++;
+        const file = document.getElementById('csvFile').files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const lines = e.target.result.split('\n');
+            let count = 0;
+            for (let i = 1; i < lines.length; i++) {
+                const row = lines[i].split(',');
+                if (row.length >= 3) {
+                    queue.push(new Job(row[0].trim(), parseInt(row[1]), parseInt(row[2])));
+                    count++;
                 }
             }
-        }
-
-        // 3. 更新日誌回饋
-        let logMsg = `[系統] 匯入完成！成功: ${successCount} 筆`;
-        if (skipCount > 0) {
-            logMsg += `，<span style="color:var(--warning)">跳過重複: ${skipCount} 筆</span>`;
-        }
-        addLog(logMsg);
-        
-        fileInput.value = ''; 
-    };
-
-    reader.readAsText(file);
-}
+            addLog(`📂 成功匯入 ${count} 筆訂單`);
+        };
+        reader.readAsText(file);
+    }
 </script>
-
 </body>
 </html>
